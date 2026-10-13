@@ -15,12 +15,14 @@ def request_cost(
     cache_discount: float = 0.10,   # Anthropic cached-read ~0.1x (=-90%)
     batch: bool = False,
     batch_discount: float = 0.50,   # Batch API ~ -50%
+    cache_write_cost: float = 1.0,  # 1.25 when caching is on: every miss writes the cache
 ) -> float:
-    """USD cost of a single request. Cached input billed at cache_discount x price."""
+    """USD cost of a single request. Cached input billed at cache_discount x price,
+    uncached input at cache_write_cost x price."""
     cached_in = min(max(0, cached_in), input_tok)
     uncached_in = input_tok - cached_in
     cost = (
-        (uncached_in / 1e6) * price_in_per_m
+        (uncached_in / 1e6) * price_in_per_m * cache_write_cost
         + (cached_in / 1e6) * price_in_per_m * cache_discount
         + (output_tok / 1e6) * price_out_per_m
     )
@@ -50,6 +52,24 @@ def discount_stack(
     cache_mult = cache_hit_frac * cache_discount + (1.0 - cache_hit_frac)
     batch_mult = batch_discount if batch else 1.0
     return cache_mult * batch_mult
+
+
+def cache_break_even_reads(write_cost: float = 1.25, read_discount: float = 0.10) -> float:
+    """Reads per cache write needed before caching beats no cache.
+
+    A prefix written once and read N times costs write_cost + N*read_discount passes
+    with caching vs 1 + N without -> break-even N = (write_cost - 1) / (1 - read_discount).
+    Price cancels out, so the threshold is the same for small and large tiers.
+    Anthropic 5-min TTL (1.25x write, 0.1x read) -> ~0.28 reads.
+    """
+    if read_discount >= 1.0:
+        return float("inf")
+    return max(0.0, (write_cost - 1.0) / (1.0 - read_discount))
+
+
+def cache_is_worth_it(avg_reads: float, write_cost: float = 1.25, read_discount: float = 0.10) -> bool:
+    """True when the observed reads per write clear the break-even."""
+    return avg_reads > cache_break_even_reads(write_cost, read_discount)
 
 
 def break_even_utilization(discount_frac: float) -> float:

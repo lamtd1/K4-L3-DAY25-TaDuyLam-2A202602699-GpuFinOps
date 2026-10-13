@@ -32,3 +32,16 @@ def test_spot_checkpoint_saves():
     res = pricing.spot_checkpoint_cost(100, 1.5, 2.5)
     assert res["spot_cost"] < res["on_demand_cost"]
     assert res["savings_pct"] > 0
+
+
+def test_cache_is_worth_it_break_even():
+    be = pricing.cache_break_even_reads(1.25, 0.10)
+    assert abs(be - 0.25 / 0.9) < 1e-9                      # ~0.28 reads per write
+    assert pricing.cache_is_worth_it(1.0) is True           # chat/doc-qa level reuse
+    assert pricing.cache_is_worth_it(0.08) is False         # web-search level reuse
+    assert pricing.cache_is_worth_it(5, read_discount=1.0) is False  # no read discount -> never
+    # at break-even, caching and no caching cost the same
+    n = be
+    assert abs((1.25 + n * 0.10) - (1 + n)) < 1e-9
+    # write premium makes an all-miss request cost more than uncached
+    assert pricing.request_cost(1000, 0, 3.0, 15.0, cache_write_cost=1.25) > pricing.request_cost(1000, 0, 3.0, 15.0)
